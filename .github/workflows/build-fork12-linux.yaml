@@ -33,6 +33,14 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Configure swap space
+        run: |
+          sudo fallocate -l 16G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          free -h
+
       - name: Determine image tag
         id: tag
         run: |
@@ -79,6 +87,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             ARG_PROVER_FORK_ID=12
+            MAKE_JOBS=2
           cache-from: type=gha
           cache-to: type=gha,mode=max
           provenance: true

@@ -1,6 +1,7 @@
 FROM ubuntu:22.04 as build
 
 ARG ARG_PROVER_FORK_ID
+ARG MAKE_JOBS=0
 
 RUN DEBIAN_FRONTEND=noninteractive apt-get update -y && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential libgmp-dev \
@@ -16,7 +17,11 @@ COPY ./test ./test
 COPY ./tools ./tools
 COPY Makefile .
 RUN make PROVER_FORK_ID=$ARG_PROVER_FORK_ID generate
-RUN make PROVER_FORK_ID=$ARG_PROVER_FORK_ID -j
+RUN if [ "${MAKE_JOBS}" = "0" ]; then \
+      make PROVER_FORK_ID=$ARG_PROVER_FORK_ID -j; \
+    else \
+      make PROVER_FORK_ID=$ARG_PROVER_FORK_ID -j${MAKE_JOBS}; \
+    fi
 
 
 FROM ubuntu:22.04 as executor

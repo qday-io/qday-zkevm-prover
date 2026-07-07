@@ -1,5 +1,8 @@
 FROM ubuntu:22.04 as build
 
+ARG ARG_PROVER_FORK_ID
+ARG MAKE_JOBS=0
+
 RUN DEBIAN_FRONTEND=noninteractive apt-get update -y && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential libgmp-dev \
     libbenchmark-dev nasm nlohmann-json3-dev libsecp256k1-dev libomp-dev \
@@ -13,8 +16,12 @@ COPY ./src ./src
 COPY ./test ./test
 COPY ./tools ./tools
 COPY Makefile .
-RUN make generate
-RUN make -j
+RUN make PROVER_FORK_ID=$ARG_PROVER_FORK_ID generate
+RUN if [ "${MAKE_JOBS}" = "0" ]; then \
+      make PROVER_FORK_ID=$ARG_PROVER_FORK_ID -j; \
+    else \
+      make PROVER_FORK_ID=$ARG_PROVER_FORK_ID -j${MAKE_JOBS}; \
+    fi
 
 
 FROM ubuntu:22.04 as executor
@@ -22,6 +29,7 @@ FROM ubuntu:22.04 as executor
 WORKDIR /app
 COPY ./testvectors ./testvectors
 COPY ./config ./config
+COPY ./setup ./setup
 COPY ./src/main_sm/fork_1/scripts/rom.json ./src/main_sm/fork_1/scripts/rom.json
 COPY ./src/main_sm/fork_2/scripts/rom.json ./src/main_sm/fork_2/scripts/rom.json
 COPY ./src/main_sm/fork_3/scripts/rom.json ./src/main_sm/fork_3/scripts/rom.json
@@ -31,6 +39,9 @@ COPY ./src/main_sm/fork_6/scripts/rom.json ./src/main_sm/fork_6/scripts/rom.json
 COPY ./src/main_sm/fork_7/scripts/rom.json ./src/main_sm/fork_7/scripts/rom.json
 COPY ./src/main_sm/fork_8/scripts/rom.json ./src/main_sm/fork_8/scripts/rom.json
 COPY ./src/main_sm/fork_9/scripts/rom.json ./src/main_sm/fork_9/scripts/rom.json
+COPY ./src/main_sm/fork_10/scripts/rom_10.json ./src/main_sm/fork_10/scripts/rom_10.json
+COPY ./src/main_sm/fork_10/scripts/rom_11.json ./src/main_sm/fork_10/scripts/rom_11.json
+COPY ./src/main_sm/fork_12/scripts/rom_12.json ./src/main_sm/fork_12/scripts/rom_12.json
 
 RUN DEBIAN_FRONTEND=noninteractive apt update && \
     DEBIAN_FRONTEND=noninteractive apt install -y libgmp-dev \

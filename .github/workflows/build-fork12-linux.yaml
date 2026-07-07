@@ -1,15 +1,27 @@
-name: Build fork.12 Linux image
+name: Build fork.12 Linux image (GHCR)
 
 on:
   workflow_dispatch:
     inputs:
       image_tag:
-        description: 'Docker image tag'
+        description: 'Docker image tag (e.g. v8.0.0-RC16-fork.12)'
         required: true
         default: 'v8.0.0-RC16-fork.12'
   push:
     tags:
       - 'v8.0.0-RC16*'
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   build-docker:
@@ -21,18 +33,6 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Login to DockerHub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
       - name: Determine image tag
         id: tag
         run: |
@@ -42,17 +42,44 @@ jobs:
             echo "tag=${GITHUB_REF_NAME}-fork.12" >> $GITHUB_OUTPUT
           fi
 
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=${{ steps.tag.outputs.tag }}
+            type=sha,format=short
+          labels: |
+            org.opencontainers.image.source=${{ github.repositoryUrl }}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Build and push Executor 12
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: Dockerfile-GHA
           platforms: linux/amd64
           push: true
           target: executor
-          tags: |
-            hermeznetwork/zkevm-prover:${{ steps.tag.outputs.tag }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             ARG_PROVER_FORK_ID=12
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          provenance: true
+          sbom: true

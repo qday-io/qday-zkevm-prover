@@ -210,7 +210,7 @@ public:
     bool jsonLogs;
 
     void load(json &config);
-    bool generateProof(void) const { return runFileGenBatchProof || runFileGenAggregatedProof || runFileGenFinalProof || runAggregatorClient; }
+    bool generateProof(void) const { return (runFileGenBatchProof || runFileGenAggregatedProof || runFileGenFinalProof || runAggregatorClient) && !runAggregatorClientMock; }
     void print(void);
     bool check(void); // Checks that the loaded configuration is correct; returns true if there is at least one error
 };

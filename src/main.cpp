@@ -495,13 +495,6 @@ int main(int argc, char **argv)
         ensureDirectoryExists(config.outputPath);
     }
 
-    // Create an instace of the Prover
-    TimerStart(PROVER_CONSTRUCTOR);
-    Prover prover(fr,
-                  poseidon,
-                  config);
-    TimerStopAndLog(PROVER_CONSTRUCTOR);
-
     /* SERVERS */
 
     // Create the HashDB server and run it, if configured
@@ -514,16 +507,6 @@ int main(int argc, char **argv)
         pHashDBServer->runThread();
     }
 
-    // Create the executor server and run it, if configured
-    ExecutorServer *pExecutorServer = NULL;
-    if (config.runExecutorServer)
-    {
-        pExecutorServer = new ExecutorServer(fr, prover, config);
-        zkassert(pExecutorServer != NULL);
-        zklog.info("Launching executor server thread...");
-        pExecutorServer->runThread();
-    }
-
     // Create the aggregator server and run it, if configured
     AggregatorServer *pAggregatorServer = NULL;
     if (config.runAggregatorServer)
@@ -533,6 +516,39 @@ int main(int argc, char **argv)
         zklog.info("Launching aggregator server thread...");
         pAggregatorServer->runThread();
         sleep(5);
+    }
+
+    // Determine if Prover needs to be constructed (skip for mock-only mode)
+    bool needProver = config.runExecutorServer || config.runExecutorClient ||
+                      config.runExecutorClientMultithread ||
+                      config.runAggregatorClient || config.runFileGenBatchProof ||
+                      config.runFileGenAggregatedProof || config.runFileGenFinalProof ||
+                      config.runFileProcessBatch || config.runFileProcessBatchMultithread ||
+                      config.runFileExecute;
+
+    ExecutorServer *pExecutorServer = NULL;
+    ExecutorClient *pExecutorClient = NULL;
+    AggregatorClient *pAggregatorClient = NULL;
+
+    if (needProver)
+    {
+
+    // Create an instace of the Prover
+    TimerStart(PROVER_CONSTRUCTOR);
+    Prover prover(fr,
+                  poseidon,
+                  config);
+    TimerStopAndLog(PROVER_CONSTRUCTOR);
+
+    /* SERVICES THAT DEPEND ON PROVER */
+
+    // Create the executor server and run it, if configured
+    if (config.runExecutorServer)
+    {
+        pExecutorServer = new ExecutorServer(fr, prover, config);
+        zkassert(pExecutorServer != NULL);
+        zklog.info("Launching executor server thread...");
+        pExecutorServer->runThread();
     }
 
     /* FILE-BASED INPUT */
@@ -647,7 +663,6 @@ int main(int argc, char **argv)
     /* CLIENTS */
 
     // Create the executor client and run it, if configured
-    ExecutorClient *pExecutorClient = NULL;
     if (config.runExecutorClient)
     {
         pExecutorClient = new ExecutorClient(fr, config);
@@ -668,21 +683,22 @@ int main(int argc, char **argv)
         pExecutorClient->runThreads();
     }
 
-    // Run the hashDB test, if configured
-    if (config.runHashDBTest)
-    {
-        zklog.info("Launching HashDB test thread...");
-        HashDBTest(config);
-    }
-
     // Create the aggregator client and run it, if configured
-    AggregatorClient *pAggregatorClient = NULL;
     if (config.runAggregatorClient)
     {
         pAggregatorClient = new AggregatorClient(fr, config, prover);
         zkassert(pAggregatorClient != NULL);
         zklog.info("Launching aggregator client thread...");
         pAggregatorClient->runThread();
+    }
+
+    } // end if (needProver)
+
+    // Run the hashDB test, if configured
+    if (config.runHashDBTest)
+    {
+        zklog.info("Launching HashDB test thread...");
+        HashDBTest(config);
     }
 
     // Create the aggregator client and run it, if configured

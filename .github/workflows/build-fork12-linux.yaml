@@ -37,10 +37,11 @@ jobs:
         run: |
           sudo swapoff /swapfile 2>/dev/null || true
           sudo rm -f /swapfile
-          sudo fallocate -l 16G /swapfile
+          sudo fallocate -l 24G /swapfile
           sudo chmod 600 /swapfile
           sudo mkswap /swapfile
           sudo swapon /swapfile
+          sudo sysctl vm.overcommit_memory=1
           free -h
 
       - name: Determine image tag
@@ -89,8 +90,6 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             ARG_PROVER_FORK_ID=12
-            MAKE_JOBS=2
+            MAKE_JOBS=1
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          provenance: true
-          sbom: true

@@ -10,8 +10,13 @@
 #include "config.hpp"
 #include "version.hpp"
 #include "proof2zkin.hpp"
-#include "calcwit.hpp"
-#include "circom.hpp"
+#include "definitions.hpp"
+#if (PROVER_FORK_ID == 12)
+    #include "fork_12/calcwit.hpp"
+    #include "fork_12/circom.hpp"
+#else
+    #error "Invalid PROVER_FORK_ID"
+#endif
 #include "main.hpp"
 #include "prover.hpp"
 #include "service/executor/executor_server.hpp"
@@ -39,16 +44,11 @@
 #include "hashdb_singleton.hpp"
 #include "unit_test.hpp"
 #include "database_cache_test.hpp"
-#include "main_sm/fork_8/main_exec_c/account.hpp"
 #include "state_manager.hpp"
-#include "state_manager_64.hpp"
 #include "check_tree_test.hpp"
 #include "database_performance_test.hpp"
-#include "smt_64_test.hpp"
 #include "sha256.hpp"
-#include "page_manager_test.hpp"
 #include "zkglobals.hpp"
-#include "key_value_tree_test.hpp"
 
 using namespace std;
 using json = nlohmann::json;
@@ -334,6 +334,13 @@ int main(int argc, char **argv)
     // Print the number of cores
     zklog.info("Number of cores=" + to_string(getNumberOfCores()));
 
+    // Print AVX mode used
+#ifdef __AVX512__
+    zklog.info("Vectorization based on AVX512");
+#else
+    zklog.info("Vectorization based on AVX2");
+#endif
+
     // Print the hostname and the IP address
     string ipAddress;
     getIPAddress(ipAddress);
@@ -366,21 +373,11 @@ int main(int argc, char **argv)
     zklog.info("FNEC  p-1 =" + fnec.toString(fnec.negOne(),16) + " = " + fnec.toString(fnec.negOne(),10));
 #endif
 
-    // Generate account zero keys
-    fork_8::Account::GenerateZeroKey(fr, poseidon);
-
     // Init the HashDB singleton
     hashDBSingleton.init(fr, config);
 
     // Init the StateManager singleton
-    if (config.hashDB64)
-    {
-        stateManager64.init();
-    }
-    else
-    {
-        stateManager.init(config);
-    }
+    stateManager.init(config);
 
     // Init goldilocks precomputed
     TimerStart(GOLDILOCKS_PRECOMPUTED_INIT);
@@ -400,44 +397,6 @@ int main(int argc, char **argv)
     {
         SHA256GenerateScript(config);
     }
-
-#ifdef DATABASE_USE_CACHE
-
-    /* INIT DB CACHE */
-    if(config.useAssociativeCache){
-        Database::useAssociativeCache = true;
-        Database::dbMTACache.postConstruct(config.log2DbMTAssociativeCacheIndexesSize, config.log2DbMTAssociativeCacheSize, "MTACache");
-    }
-    else{
-        Database::useAssociativeCache = false;
-        Database::dbMTCache.setName("MTCache");
-        Database::dbMTCache.setMaxSize(config.dbMTCacheSize*1024*1024);
-    }
-    Database::dbProgramCache.setName("ProgramCache");
-    Database::dbProgramCache.setMaxSize(config.dbProgramCacheSize*1024*1024);
-
-    if (config.databaseURL != "local") // remote DB
-    {
-
-        if (config.loadDBToMemCache && (config.runAggregatorClient || config.runExecutorServer || config.runHashDBServer))
-        {
-            TimerStart(DB_CACHE_LOAD);
-            // if we have a db cache enabled
-            if ((Database::dbMTCache.enabled()) || (Database::dbProgramCache.enabled()) || (Database::dbMTACache.enabled()))
-            {
-                if (config.loadDBToMemCacheInParallel) {
-                    // Run thread that loads the DB into the dbCache
-                    std::thread loadDBThread (loadDb2MemCache, config);
-                    loadDBThread.detach();
-                } else {
-                    loadDb2MemCache(config);
-                }
-            }
-            TimerStopAndLog(DB_CACHE_LOAD);
-        }
-    }
-
-#endif // DATABASE_USE_CACHE
 
     /* TESTS */
 
@@ -495,6 +454,7 @@ int main(int argc, char **argv)
     if (config.runDatabaseCacheTest)
     {
         DatabaseCacheTest();
+        //DatabaseCacheBenchmark();
     }
 
     // Test check tree
@@ -507,22 +467,6 @@ int main(int argc, char **argv)
     if (config.runDatabasePerformanceTest)
     {
         DatabasePerformanceTest();
-    }
-    // Test PageManager
-    if (config.runPageManagerTest)
-    {
-        PageManagerTest();
-    }
-    // Test KeyValueTree
-    if (config.runKeyValueTreeTest)
-    {
-        KeyValueTreeTest();
-    }
-
-    // Test SMT64
-    if (config.runSMT64Test)
-    {
-        Smt64Test(config);
     }
 
     // Unit test
@@ -551,13 +495,6 @@ int main(int argc, char **argv)
         ensureDirectoryExists(config.outputPath);
     }
 
-    // Create an instace of the Prover
-    TimerStart(PROVER_CONSTRUCTOR);
-    Prover prover(fr,
-                  poseidon,
-                  config);
-    TimerStopAndLog(PROVER_CONSTRUCTOR);
-
     /* SERVERS */
 
     // Create the HashDB server and run it, if configured
@@ -570,16 +507,6 @@ int main(int argc, char **argv)
         pHashDBServer->runThread();
     }
 
-    // Create the executor server and run it, if configured
-    ExecutorServer *pExecutorServer = NULL;
-    if (config.runExecutorServer)
-    {
-        pExecutorServer = new ExecutorServer(fr, prover, config);
-        zkassert(pExecutorServer != NULL);
-        zklog.info("Launching executor server thread...");
-        pExecutorServer->runThread();
-    }
-
     // Create the aggregator server and run it, if configured
     AggregatorServer *pAggregatorServer = NULL;
     if (config.runAggregatorServer)
@@ -589,6 +516,39 @@ int main(int argc, char **argv)
         zklog.info("Launching aggregator server thread...");
         pAggregatorServer->runThread();
         sleep(5);
+    }
+
+    // Determine if Prover needs to be constructed (skip for mock-only mode)
+    bool needProver = config.runExecutorServer || config.runExecutorClient ||
+                      config.runExecutorClientMultithread ||
+                      config.runAggregatorClient || config.runFileGenBatchProof ||
+                      config.runFileGenAggregatedProof || config.runFileGenFinalProof ||
+                      config.runFileProcessBatch || config.runFileProcessBatchMultithread ||
+                      config.runFileExecute;
+
+    ExecutorServer *pExecutorServer = NULL;
+    ExecutorClient *pExecutorClient = NULL;
+    AggregatorClient *pAggregatorClient = NULL;
+
+    if (needProver)
+    {
+
+    // Create an instace of the Prover
+    TimerStart(PROVER_CONSTRUCTOR);
+    Prover prover(fr,
+                  poseidon,
+                  config);
+    TimerStopAndLog(PROVER_CONSTRUCTOR);
+
+    /* SERVICES THAT DEPEND ON PROVER */
+
+    // Create the executor server and run it, if configured
+    if (config.runExecutorServer)
+    {
+        pExecutorServer = new ExecutorServer(fr, prover, config);
+        zkassert(pExecutorServer != NULL);
+        zklog.info("Launching executor server thread...");
+        pExecutorServer->runThread();
     }
 
     /* FILE-BASED INPUT */
@@ -703,7 +663,6 @@ int main(int argc, char **argv)
     /* CLIENTS */
 
     // Create the executor client and run it, if configured
-    ExecutorClient *pExecutorClient = NULL;
     if (config.runExecutorClient)
     {
         pExecutorClient = new ExecutorClient(fr, config);
@@ -724,21 +683,22 @@ int main(int argc, char **argv)
         pExecutorClient->runThreads();
     }
 
-    // Run the hashDB test, if configured
-    if (config.runHashDBTest)
-    {
-        zklog.info("Launching HashDB test thread...");
-        HashDBTest(config);
-    }
-
     // Create the aggregator client and run it, if configured
-    AggregatorClient *pAggregatorClient = NULL;
     if (config.runAggregatorClient)
     {
         pAggregatorClient = new AggregatorClient(fr, config, prover);
         zkassert(pAggregatorClient != NULL);
         zklog.info("Launching aggregator client thread...");
         pAggregatorClient->runThread();
+    }
+
+    } // end if (needProver)
+
+    // Run the hashDB test, if configured
+    if (config.runHashDBTest)
+    {
+        zklog.info("Launching HashDB test thread...");
+        HashDBTest(config);
     }
 
     // Create the aggregator client and run it, if configured
